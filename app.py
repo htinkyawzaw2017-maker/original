@@ -3,22 +3,18 @@ import os
 import json
 import subprocess
 import time
-import re
-from pathlib import Path
 import shutil
+from pathlib import Path
 import whisper
-import edge_tts
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-# Load Proxy from .env if available
 load_dotenv()
 GEMINI_PROXY = os.getenv("GEMINI_PROXY", "none").strip()
 if GEMINI_PROXY.lower() != "none" and GEMINI_PROXY != "":
     os.environ['HTTP_PROXY'] = GEMINI_PROXY
     os.environ['HTTPS_PROXY'] = GEMINI_PROXY
 
-# ---- CONFIGURATION ----
 APP_DIR = Path(__file__).resolve().parent
 WORKSPACE_DIR = APP_DIR / "workspace"
 UPLOAD_DIR = WORKSPACE_DIR / "uploads"
@@ -31,14 +27,13 @@ PROGRESS_FILE = WORKSPACE_DIR / "progress.json"
 for d in [UPLOAD_DIR, CHUNKS_DIR, AUDIO_DIR, PROCESSED_DIR, OUTPUT_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-# Smart Sync & AI Models
 MODELS_FALLBACK = [
     "gemini-3.5-flash", 
     "gemini-3.5-flash-lite", 
     "gemini-3.6-flash", 
     "gemini-3.7-flash", 
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash" # Ultimate fallback
+    "gemini-2.5-flash"
 ]
 
 VOICE_MAP = {
@@ -46,7 +41,6 @@ VOICE_MAP = {
     "English": {"ကျား": "en-US-ChristopherNeural", "မ": "en-US-AriaNeural"},
 }
 
-# ---- HELPER FUNCTIONS ----
 def load_progress():
     if PROGRESS_FILE.exists():
         try:
@@ -57,13 +51,11 @@ def load_progress():
     return {}
 
 def save_progress(data):
-    with open(PROGRESS_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
+    with open(PROGRESS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
 
 def require_ffmpeg():
-    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
-        return True
-    return False
+    return shutil.which("ffmpeg") and shutil.which("ffprobe")
 
 def run_media(command):
     try:
@@ -80,10 +72,9 @@ def duration_of(path):
     except Exception:
         return 0
 
-# ---- CORE PROCESSING PIPELINE ----
 def transcribe_local(audio_path, language=None):
     try:
-        model = whisper.load_model("tiny") # Use base/small if you have more RAM
+        model = whisper.load_model("tiny")
         options = {"task": "transcribe"}
         if language and language != "Auto detect":
             options["language"] = language
@@ -105,8 +96,8 @@ def generate_with_fallback(prompt, api_keys):
                 text = getattr(response, "text", "").strip()
                 if text:
                     return text, None
-            except Exception as e:
-                continue # Try next model
+            except Exception:
+                continue 
     return None, "Key များနှင့် Model များအားလုံး Limit ပြည့်သွားပါပြီ။"
 
 def create_edge_tts(text, language, gender, output_path):
@@ -128,7 +119,7 @@ def smart_sync_video(video_in, audio_in, video_out):
     a_dur = duration_of(audio_in)
     
     if v_dur == 0 or a_dur == 0:
-        return False, "Duration error"
+        return False, "Duration error (Could not read video or audio length)"
         
     ratio = a_dur / v_dur
     
@@ -168,15 +159,14 @@ def split_video(input_path, chunk_mins):
         "-segment_time", str(chunk_secs),
         "-reset_timestamps", "1", output_pattern
     ]
-    ok, err = run_media(cmd)
+    ok, _ = run_media(cmd)
     if ok:
         return sorted([str(p) for p in CHUNKS_DIR.glob("chunk_*.mp4")])
     return []
 
-# ---- STREAMLIT UI ----
 st.set_page_config(page_title="Smart Sync AI Dubber", layout="wide")
-st.title("🎬 Smart Sync AI Video Dubber")
-st.markdown("ဗီဒီယိုအရှည်များကို အပိုင်းခွဲပြီး၊ AI ဖြင့်ဘာသာပြန်ကာ၊ **Smart Sync** စနစ်ဖြင့် ရုပ်နဲ့အသံ အတိအကျညှိပေးမည့်စနစ်။ (Key Limit ပြည့်လျှင် အလိုလိုပြောင်းပေးပြီး ရပ်သွားပါက Resume ပြန်လုပ်နိုင်ပါသည်။)")
+st.title("🎬 AI Video Dubber & Smart Sync")
+st.markdown("ဗီဒီယိုအရှည်များကို အပိုင်းခွဲပြီး၊ AI ဖြင့်ဘာသာပြန်ကာ၊ **Smart Sync (၁.၂၅ ဆ ကန့်သတ်ချက်ပါဝင်)** စနစ်ဖြင့် ရုပ်နဲ့အသံ အတိအကျညှိပေးမည့်စနစ်။")
 
 if 'progress' not in st.session_state:
     st.session_state.progress = load_progress()
@@ -189,8 +179,10 @@ with st.sidebar:
     target_lang = st.selectbox("Target Dubbing Language", ["မြန်မာ", "English"])
     voice_gender = st.selectbox("Voice Gender", ["ကျား", "မ"])
     chunk_size = st.slider("Chunk Size (Minutes)", 1, 15, 3)
+    tone = st.selectbox("Recap Tone", ["Movie recap — တင်းကျပ်ပြီးစီးဆင်း", "Documentary — ရှင်းလင်းတည်ငြိမ်"])
     
-    if st.button("🗑️ Reset Workspace"):
+    st.divider()
+    if st.button("🗑️ Reset Workspace", type="secondary"):
         for d in [UPLOAD_DIR, CHUNKS_DIR, AUDIO_DIR, PROCESSED_DIR, OUTPUT_DIR]:
             shutil.rmtree(d, ignore_errors=True)
             d.mkdir(parents=True, exist_ok=True)
@@ -230,7 +222,7 @@ if prog.get("original_file"):
                     st.success(f"Video split into {len(chunks)} chunks.")
                     st.rerun()
                 else:
-                    st.error("Splitting failed.")
+                    st.error("Splitting failed. Ensure FFmpeg is installed.")
 
     # STEP 2: PROCESSING (RESUMABLE)
     if status in ["chunked", "processing"]:
@@ -242,46 +234,44 @@ if prog.get("original_file"):
         st.progress(done / total if total > 0 else 0)
         st.write(f"Processed: **{done} / {total}** chunks")
         
-        if st.button("▶ START / RESUME Smart Sync Processing", type="primary"):
+        if st.button("▶ START / RESUME Processing", type="primary"):
             if not api_keys:
                 st.error("ကျေးဇူးပြု၍ Sidebar တွင် API Key ထည့်ပါ။")
                 st.stop()
                 
             prog["status"] = "processing"
             save_progress(prog)
-            
             status_text = st.empty()
             
             for i, chunk_path in enumerate(chunks):
                 chunk_name = Path(chunk_path).name
                 if chunk_name in processed:
-                    continue # Skip completed chunks (Resume logic)
+                    continue # Skip completed chunks
                     
                 status_text.text(f"Processing {chunk_name} ({i+1}/{total})...")
                 
-                # 1. Extract Audio
+                # Extract Audio & Transcribe
                 audio_path = AUDIO_DIR / f"{chunk_name}.wav"
                 run_media(["ffmpeg", "-y", "-i", chunk_path, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", str(audio_path)])
                 
-                # 2. Transcribe
                 status_text.text(f"Transcribing {chunk_name}...")
                 transcript = transcribe_local(audio_path)
                 
-                # 3. Translate / Recap
-                status_text.text(f"Translating {chunk_name} with Gemini...")
-                prompt = f"Translate this transcript naturally into {target_lang} for voiceover. Output only the translated text.\n\n{transcript}"
+                # Gemini Recap Translation
+                status_text.text(f"Translating & Recapping {chunk_name}...")
+                prompt = f"Tone: {tone}\nTranslate this transcript naturally into {target_lang} for a Voice-Over. Output only the translated text.\n\n{transcript}"
                 script, err = generate_with_fallback(prompt, api_keys)
                 
                 if err or not script:
                     st.error(f"AI Limit reached or error on {chunk_name}: {err}. Hit Resume later.")
-                    st.stop() # Stops execution, but progress is saved!
+                    st.stop()
                 
-                # 4. TTS 
+                # TTS Generation
                 status_text.text(f"Generating Audio for {chunk_name}...")
                 tts_path = AUDIO_DIR / f"tts_{chunk_name}.mp3"
                 create_edge_tts(script, target_lang, voice_gender, tts_path)
                 
-                # 5. Smart Sync
+                # Smart Sync
                 status_text.text(f"Smart Syncing Video and Audio for {chunk_name}...")
                 out_path = PROCESSED_DIR / f"sync_{chunk_name}"
                 ok, err = smart_sync_video(chunk_path, tts_path, out_path)
@@ -304,7 +294,7 @@ if prog.get("original_file"):
         if st.button("Step 3: Merge Final Video", type="primary"):
             with st.spinner("Merging all chunks..."):
                 list_file = WORKSPACE_DIR / "concat_list.txt"
-                with open(list_file, "w") as f:
+                with open(list_file, "w", encoding="utf-8") as f:
                     for chunk_path in prog["chunks"]:
                         chunk_name = Path(chunk_path).name
                         safe_path = prog["processed"][chunk_name].replace('\\', '/')
@@ -329,4 +319,4 @@ if prog.get("original_file"):
         if final_file.exists():
             st.video(str(final_file))
             with open(final_file, "rb") as f:
-                st.download_button("💾 Download Final Dubbed Video", f, file_name="Dubbed_Video.mp4", mime="video/mp4", type="primary")
+                st.download_button("💾 Download Final Dubbed Video", f, file_name="Dubbed_Video_SmartSync.mp4", mime="video/mp4", type="primary")
