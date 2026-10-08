@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: recap-studio-mm
+    runtime: docker
+    region: singapore
+    plan: 1c-2g
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: commit
